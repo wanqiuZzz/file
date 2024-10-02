@@ -26,11 +26,11 @@ def gradient_text(text, start_color, end_color):
     return gradient + Style.RESET_ALL
 
 def get_current_datetime():
-    """显示当前时间."""
+    """Возвращает текущую дату и время в отформатированной строке."""
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
 def print_main_menu():
-print()
+    print()
 print(viod + gradient_text("▀█▀ █░█ █▀▀ █▀█ ▄▀█ █▄▀", "FF0000", "FF0000"))
 print(viod + gradient_text("░█░ █▀█ ██▄ █▀▀ █▀█ █░█", "FFFFFF", "FFFFFF"))
 print(viod + gradient_text("--------------------------", "FFFFFF", "FFFFFF"))

@@ -1,221 +1,199 @@
-math folder_count = 0
-math runtimed = 0
-math skipped_filecount = 0
 
-# Array to store data for each chunk
-math fixedsize = 65536
 
-callfunction getdata 1
+math NO_TAIL_INFO = 0   
+quickbmsver "0.11"
 
-startfunction getdata 
-    for i = 0 < fsize
-        math runtimed = i
-        callfunction getname 1
-        label skipped_file
-        math chunks = 0 
+math TOC_FILE = 0
 
-        # Initialize temporary chunk size
-        math tmp_chunks = 0 
-        
-        do 
-            callfunction getoffset 1
-            goto offset
-            callfunction getinfo 1
-            putarray 0 chunks coffset # Store coffset in array
-            putarray 1 chunks czipsize # Store czipsize in array
-            putarray 2 chunks csize # Store csize in array
+# set your AES_KEY here as text or C string ("\x11\x22...") or umodel hex (0x1122...)
+set AES_KEY binary ""
+putarray 10 -1 ""
+math AES_KEY_IS_SET = 0
 
-            if chunks == 0 
-                math tmp_chunks = csize
-            else 
-                math tmp_chunks += csize 
-            endif
+math ALTERNATIVE_MODE = 0
+math BASE_PATH_INCLUDED = 1
+math DIR_FLAG = 1
+math CHUNK_OFFSET_ABSOLUTE = -1 # default, enabled
 
-            if csize == fixedsize
-                math chunks += 1 # Count the chunks correctly
-            endif
-        while csize == fixedsize
-        
-        math uasset = 0 # Initialize uasset file type: 1 uasset, 2 uexp, 3 ubulk, etc.
-        if chunks > 0
-            # Processing for files with multiple chunks
-            getarray coffset 0 0 
-            getarray czipsize 1 0
-            getarray csize 2 0
-            print "Processing chunked data..."
-            clog MEMORY_FILE5 coffset czipsize csize
-            math toc_first_chunk = -5
-            
-            getarray coffset 0 chunks 
-            getarray czipsize 1 chunks
-            getarray csize 2 chunks
-            clog MEMORY_FILE10 coffset czipsize csize
-            math toc_end_chunk = -10 
-            
-            goto 0 toc_first_chunk
-            get magic_files long toc_first_chunk
-            callfunction guest_extension 1
-            
-            if uasset == 0
-                goto -0x4 toc_end_chunk
-                get magic_files threebyte toc_end_chunk
-                if magic_files == 0x2a83c1 # "\xc1\x83\x2a"
-                    math uasset = 2 # .uexp
-                else
-                    math uasset = 3 # .ubulk
-                endif
-            endif
-        else 
-            # Processing for single chunk files
-            getarray coffset 0 0 
-            getarray czipsize 1 0
-            getarray csize 2 0
-            print "Processing single chunk data..."
-            clog MEMORY_FILE5 coffset czipsize csize
-            math toc_file_chunk = -5
-            
-            goto 0 toc_file_chunk
-            get magic_files long toc_file_chunk
-            callfunction guest_extension 1
-            
-            if uasset == 0
-                goto -0x4 toc_file_chunk
-                get magic_files threebyte toc_file_chunk
-                if magic_files == 0x2a83c1
-                    math uasset = 2 # .uexp
-                else
-                    math uasset = 3 # .ubulk
-                endif
-            endif
-        endif
+goto -0x2C # Chinese PUBG (new)
+get MAGIC long
+get VERSION long
+endian guess VERSION
+if VERSION != 8
+	print "This package is not compatible with the script!"
+	cleanexit
+endif	
 
-        callfunction adder_ext 1
+findloc OFFSET binary "\x2E\x2E\x2F\x2E\x2E\x2F\x2E\x2E\x2F" 0 "" 0
+if OFFSET = ""
+	findloc OFFSET binary "\x57\x57\x56\x57\x57\x56\x57\x57\x56" 0 "" 0
+	if OFFSET = ""
+		print "This package is not compatible with the script!"
+		cleanexit
+	else
+		math ENCRYPT = 1
+		filexor 0x79
+	endif
+else
+	math ENCRYPT = 0
+endif
+math OFFSET - 4
+goto OFFSET
+callfunction GET_BASE_PATH 1
 
-        if chunks > 0
-            log name 0 0
-            append
-            for c = 0 <= chunks 
-                getarray coffset 0 c
-                getarray czipsize 1 c 
-                getarray csize 2 c 
-                print "Decompressing chunk %c of %chunks..."
-                clog name coffset czipsize csize
-            next c 
-            append
-        else
-            getarray coffset 0 chunks
-            getarray czipsize 1 chunks
-            getarray csize 2 chunks
-            print "Decompressing single chunk..."
-            clog name coffset czipsize csize
-        endif
-    next i
-    print "Skipped compression: %skipped_filecount%"
+math EXTRACT = 0
+get FILES long
+filexor "" ""
+for i = 0 < FILES
+	if ENCRYPT = 1
+		filexor 0x79
+	endif
+	callfunction GET_ENTRY 1
+	putarray 5 i OFFSET
+next i
+
+math EXTRACT = 1
+get ENTRIES longlong
+if ENCRYPT = 1
+	get DUMMY byte
+endif
+savepos OFFSET
+get SIZE asize
+math SIZE - OFFSET
+log MEMORY_FILE5 OFFSET SIZE
+math TOC_FILE5 = -5
+
+callfunction GET_NAME_AND_EXTRACT 1
+
+
+startfunction GET_ENTRY
+	getdstring HASH 20
+	get OFFSET longlong
+	get SIZE longlong
+	get ZIP long
+	get ZSIZE longlong
+	getdstring DUMMY2 21
+
+	math CHUNKS = 0
+	math ENCRYPTED = 0
+	if ZIP != 0
+		get CHUNKS long
+		for x = 0 < CHUNKS
+			get CHUNK_OFFSET longlong
+			get CHUNK_END_OFFSET longlong
+			putarray 0 x CHUNK_OFFSET
+			putarray 1 x CHUNK_END_OFFSET
+		next x
+	endif
+	get CHUNK_SIZE long
+	get ENCRYPTED byte	
+	if ENCRYPTED = 1
+		filexor 0x79
+	endif	
+
+	savepos TMP_OFF
+	if EXTRACT == 1
+	if CHUNKS > 0
+		log NAME 0 0
+		append
+		math TMP_SIZE = SIZE
+		for x = 0 < CHUNKS
+			getarray CHUNK_OFFSET 0 x
+			getarray CHUNK_END_OFFSET 1 x
+			math CHUNK_ZSIZE = CHUNK_END_OFFSET
+			math CHUNK_ZSIZE - CHUNK_OFFSET
+			math CHUNK_XSIZE = CHUNK_ZSIZE
+
+			if TMP_SIZE u< CHUNK_SIZE
+				math CHUNK_SIZE = TMP_SIZE
+			endif
+			if ZIP == 0
+				log NAME CHUNK_OFFSET CHUNK_SIZE 0
+			else
+				clog NAME CHUNK_OFFSET CHUNK_ZSIZE CHUNK_SIZE 0
+			endif
+			math TMP_SIZE - CHUNK_SIZE
+		next x
+		append
+	else
+		# the file offset points to an entry containing
+		# the "same" OFFSET ZSIZE SIZE ZIP HASH ZERO fields,
+		# just an additional backup... so let's skip them
+		math BASE_OFFSET = TMP_OFF
+
+		if ZIP == 0
+			log NAME BASE_OFFSET SIZE 0
+		else
+			clog NAME BASE_OFFSET ZSIZE SIZE 0
+		endif
+	endif
+	endif
+	filexor "" ""
 endfunction
 
-startfunction guest_extension 
-    if magic_files == 0x9e2a83c1
-        math uasset = 1 # .uasset
-    elif magic_files == 0x61754c1b
-        math uasset = 4 # .lua
-    elif magic_files == 0x090a0d7b
-        math uasset = 5 # .dat
-    elif magic_files == 0x007bfeff
-        math uasset = 5 # .dat
-    elif magic_files == 0x200a0d7b
-        math uasset = 5 # .dat
-    elif magic_files == 0x27da0020
-        math uasset = 6 # .res
-    elif magic_files == 0x00000001
-        math uasset = 6 # .res
-    elif magic_files == 0x7bbfbbef
-        math uasset = 6 # .res
-    elif magic_files == 0x44484b42
-        math uasset = 8 # .bnk
-    endif
+startfunction GET_BASE_PATH
+    get NAMESZ long
+	getdstring BASE_PATH NAMESZ
+	if NAMESZ != 0x0A && NAMESZ < 0xFF
+		string BASE_PATH | "../../../"
+		math BASE_PATH_INCLUDED = 0
+	endif
 endfunction
 
-startfunction adder_ext 
-    if uasset == 1
-       string name += ".uasset"
-    elif uasset == 2
-        string name += ".uexp"
-    elif uasset == 4
-        string name += ".lua"
-    elif uasset == 3
-        string name += ".ubulk"
-    elif uasset == 5
-        string name += ".dat"
-    elif uasset == 6
-        string name += ".res"
-    elif uasset == 7
-        string name += ".bin"
-    elif uasset == 8
-        string name += ".bnk"
-    endif
+startfunction CHECK_UNICODE
+	if NAMESZ >= 0
+		getdstring RESULT NAMESZ TOC_FILE5
+	else
+		math NAMESZ n NAMESZ
+		math NAMESZ * 2
+		getdstring RESULT NAMESZ TOC_FILE5
+		set RESULT unicode RESULT
+	endif
 endfunction
 
-startfunction getoffset 
-    findloc offset binary "\x28\xb5\x2f\xfd"
-    goto offset
-    idstring "\x28\xb5\x2f\xfd"
-    get encrypted byte
-    if encrypted == 0x63 
-        print "Skipping encrypted file..."
-        math skipped_filecount += 1
-        goto 5 0 SEEK_CUR
-        continue skipped_file
-    endif
-    goto 0x4 0 SEEK_CUR
-    findloc newoffset binary "\x28\xb5\x2f\xfd"
-    xmath memoffset  "newoffset -1"
+startfunction GET_NAME_AND_EXTRACT
+	if DIR_FLAG = 1
+		get DIR_COUNT longlong TOC_FILE5
+		math DIR_FLAG = 0
+	endif
+	
+	if DIR_COUNT = 0
+		math DIR_FLAG = 1
+		callfunction GET_NAME_AND_EXTRACT 1
+	else
+		math DIR_COUNT - 1
+		get NAMESZ signed_long TOC_FILE5
+		callfunction CHECK_UNICODE 1
+		string DIR_NAME = RESULT
+		get DIR_FILES longlong TOC_FILE5
+		if DIR_FILES = 0
+			callfunction GET_NAME_AND_EXTRACT 1
+		else 
+			for y = 0 < DIR_FILES
+				math EXTRACT = 1 
+				get NAMESZ signed_long TOC_FILE5
+				if NAMESZ > 0
+					get NAME string TOC_FILE5
+				else
+					callfunction CHECK_UNICODE 1
+					string NAME = RESULT
+				endif
+				string NAME p "%s%s" DIR_NAME NAME
+				if BASE_PATH_INCLUDED == 0
+					string NAME p "%s%s" BASE_PATH NAME
+				endif
+							
+				get ENTRY long TOC_FILE5
+				getarray OFFSET 5 ENTRY
+				goto OFFSET
+				callfunction GET_ENTRY 1
+				
+				math FILES - 1
+				if FILES = 0
+					cleanexit
+				endif
+			next y
+			callfunction GET_NAME_AND_EXTRACT 1
+		endif
+	endif
 endfunction
-
-startfunction getname
-    if runtimed <= folder_count
-        if runtimed == 1000 
-            math folder_count += 1000
-        endif 
-    else 
-        xmath parse "folder_count + 1000"
-        if runtimed == parse
-            math folder_count += 1000
-        endif
-    endif
-    
-    string name p "%08d" runtimed
-endfunction
-
-startfunction getinfo 
-    savepos offset_compression
-    idstring "\x28\xb5\x2f\xfd" #header
-    
-    getbits dictionary_id_flag 2
-    getbits content_checksum_flag 1
-    getbits reserved_bit 1
-    getbits unused_bit 1
-    getbits single_segment_flag 1
-    getbits frame_content_size_flag 2
-    
-    if single_segment_flag == 0 
-        get windows_decriptor byte
-    endif
-    
-    if frame_content_size_flag == 0
-        if single_segment_flag == 0     
-            math size = 0
-        else                            
-            get size byte
-        endif
-    elif frame_content_size_flag == 1   
-        get size short
-        math size + 256
-    elif frame_content_size_flag == 2   
-        get size long
-    elif frame_content_size_flag == 3   
-        get size longlong
-    endif
-    
-    do
-        getbits
-        
